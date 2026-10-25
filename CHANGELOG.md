@@ -40,6 +40,9 @@ No release versions or historical release dates have been assigned.
 
 ### Changed
 
+- Made the administrator Church donation slips section collapsible, including its
+  year filter, with a keyboard-accessible toggle. Member documents remain visible.
+
 - Updated portal branding from Grace Church to Love Assembly.
 - Replaced “tax slips” with “donation slips” across app text, email content,
   documentation, and generated download filenames.
