@@ -1,5 +1,7 @@
 # Love Assembly Church member portal
 
+See [CHANGELOG.md](CHANGELOG.md) for notable changes and update history.
+
 A local MVP with a Python/FastAPI API, React frontend, SQLite persistence, and Capacitor configuration for iOS and Android. Grace Church is placeholder branding.
 
 ## Run locally
