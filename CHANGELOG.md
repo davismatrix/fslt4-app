@@ -12,6 +12,9 @@ No release versions or historical release dates have been assigned.
 
 ### Added
 
+- Automatic backend `.env` loading from the repository root, preserving exported
+  environment variables, with an updated configuration template.
+
 - Python/FastAPI backend with SQLite persistence, scrypt password hashing,
   expiring sessions, and administrator/member access controls.
 - Administrator setup command and member account creation.

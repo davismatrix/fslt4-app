@@ -13,6 +13,9 @@ from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, field_validator
 from notifications import send_welcome
+from config import load_backend_env
+
+load_backend_env()
 
 DATA = Path(os.environ.get('CHURCH_DATA_DIR', 'data'))
 DATA.mkdir(parents=True, exist_ok=True)
