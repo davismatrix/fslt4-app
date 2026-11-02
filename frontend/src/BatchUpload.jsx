@@ -27,7 +27,7 @@ export default function BatchUpload({api, refresh, busy, action, setNotice}) {
       </tbody></table></div>
       <p>{preview.valid ? 'Check each assignment before confirming. All slips will be saved together.' : 'Fix the errors, select the corrected ZIP, and preview again. No slips have been saved.'}</p>
       <button disabled={busy || !preview.valid} onClick={() => action(async () => {
-        const result = await (await api(`/batches/confirm?digest=${encodeURIComponent(preview.digest)}`, {method:'POST', headers:{'Content-Type':'application/zip'}, body:file})).json();
+        const result = await (await api(`/batches/confirm?digest=${encodeURIComponent(preview.digest)}&preview_token=${encodeURIComponent(preview.preview_token)}`, {method:'POST', headers:{'Content-Type':'application/zip'}, body:file})).json();
         setPreview(null);
         setFile(null);
         setNotice(`${result.uploaded} donation slips uploaded successfully.`);

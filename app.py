@@ -1,6 +1,7 @@
 """Church donation-slip API. Run: uvicorn app:app --reload."""
 import hashlib
 import hmac
+import json
 import os
 import secrets
 import sqlite3
@@ -39,6 +40,35 @@ with db() as con:
         con.execute('ALTER TABLE users ADD COLUMN active INTEGER NOT NULL DEFAULT 1')
     con.execute('CREATE TABLE IF NOT EXISTS management_audit(id INTEGER PRIMARY KEY, admin_id INTEGER, member_id INTEGER, action TEXT, slip_id INTEGER, created TEXT DEFAULT CURRENT_TIMESTAMP)')
 
+
+def migrate_identifiers():
+    """Preserve rows and reserve IDs referenced by historical audit records."""
+    with db() as con:
+        con.execute('BEGIN IMMEDIATE')
+        for table in ('users', 'slips'):
+            schema = con.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone()[0]
+            if 'AUTOINCREMENT' not in schema.upper():
+                columns = ','.join(row['name'] for row in con.execute(f'PRAGMA table_info({table})'))
+                new_schema = schema.replace(f'CREATE TABLE {table}', f'CREATE TABLE {table}_migration', 1).replace('INTEGER PRIMARY KEY', 'INTEGER PRIMARY KEY AUTOINCREMENT', 1)
+                con.execute(new_schema)
+                con.execute(f'INSERT INTO {table}_migration ({columns}) SELECT {columns} FROM {table}')
+                con.execute(f'DROP TABLE {table}')
+                con.execute(f'ALTER TABLE {table}_migration RENAME TO {table}')
+            references = [('users', 'id'), ('sessions', 'user_id'), ('slips', 'member_id'), ('audit', 'user_id'), ('management_audit', 'admin_id'), ('management_audit', 'member_id')] if table == 'users' else [('slips', 'id'), ('audit', 'slip_id'), ('management_audit', 'slip_id')]
+            maximum = max(con.execute(f'SELECT coalesce(max({column}),0) FROM {source}').fetchone()[0] for source, column in references)
+            sequence = con.execute('SELECT seq FROM sqlite_sequence WHERE name=?', (table,)).fetchone()
+            if sequence is None:
+                con.execute('INSERT INTO sqlite_sequence(name,seq) VALUES (?,?)', (table, maximum))
+            elif sequence['seq'] < maximum:
+                con.execute('UPDATE sqlite_sequence SET seq=? WHERE name=?', (maximum, table))
+        con.execute('CREATE TABLE IF NOT EXISTS login_attempts(account TEXT, client TEXT, attempted REAL)')
+        con.execute('CREATE INDEX IF NOT EXISTS login_account_time ON login_attempts(account,attempted)')
+        con.execute('CREATE INDEX IF NOT EXISTS login_client_time ON login_attempts(client,attempted)')
+        con.execute('CREATE TABLE IF NOT EXISTS batch_previews(token TEXT PRIMARY KEY, admin_id INTEGER, digest TEXT, snapshot TEXT, expires REAL)')
+
+
+migrate_identifiers()
+
 def password_hash(password, salt=None):
     salt = salt or secrets.token_hex(16)
     return salt + ':' + hashlib.scrypt(password.encode(), salt=salt.encode(), n=16384, r=8, p=1).hex()
@@ -60,8 +90,8 @@ def admin(user=Depends(current_user)):
     return user
 
 class Login(BaseModel):
-    email: str
-    password: str
+    email: str = Field(min_length=1, max_length=254)
+    password: str = Field(min_length=1, max_length=128)
 
 class Member(BaseModel):
     name: str = Field(min_length=1, max_length=120)
@@ -77,18 +107,41 @@ class Member(BaseModel):
             raise ValueError('Enter a valid email address.')
         return value
 
+# Fixed dummy hash keeps unknown-account checks comparable without extra hashing.
+DUMMY_PASSWORD = password_hash(secrets.token_urlsafe(32))
+LOGIN_WINDOW = 15 * 60
+LOGIN_ACCOUNT_LIMIT = 10
+LOGIN_CLIENT_LIMIT = 50
+
+
 @app.post('/api/login')
-def login(body: Login):
+def login(body: Login, request: Request):
+    account = hashlib.sha256(body.email.strip().lower().encode()).hexdigest()
+    client = hashlib.sha256((request.client.host if request.client else 'unknown').encode()).hexdigest()
+    now = time.time()
+    # Reserve an attempt under a short lock, then release it before scrypt.
     with db() as con:
         con.execute('BEGIN IMMEDIATE')
+        con.execute('DELETE FROM login_attempts WHERE attempted<=?', (now - LOGIN_WINDOW,))
+        account_count = con.execute('SELECT count(*) FROM login_attempts WHERE account=?', (account,)).fetchone()[0]
+        client_count = con.execute('SELECT count(*) FROM login_attempts WHERE client=?', (client,)).fetchone()[0]
+        if account_count >= LOGIN_ACCOUNT_LIMIT or client_count >= LOGIN_CLIENT_LIMIT:
+            raise HTTPException(429, 'Too many sign-in attempts. Try again in 15 minutes.', headers={'Retry-After': str(LOGIN_WINDOW)})
+        con.execute('INSERT INTO login_attempts VALUES (?,?,?)', (account, client, now))
         user = con.execute('SELECT * FROM users WHERE email=?', (body.email.strip().lower(),)).fetchone()
-        # Hash even unknown accounts to avoid a fast account-existence signal.
-        expected = user['password'] if user else password_hash('unavailable')
-        if not hmac.compare_digest(password_hash(body.password, expected.split(':')[0]), expected) or not user or not user['active']:
+    expected = user['password'] if user else DUMMY_PASSWORD
+    valid = hmac.compare_digest(password_hash(body.password, expected.split(':')[0]), expected)
+    if not valid or not user or not user['active']:
+        raise HTTPException(401, 'Email or password is incorrect.')
+    with db() as con:
+        con.execute('BEGIN IMMEDIATE')
+        # Access may have been revoked while password verification was running.
+        fresh = con.execute('SELECT * FROM users WHERE id=? AND active=1 AND password=?', (user['id'], expected)).fetchone()
+        if not fresh:
             raise HTTPException(401, 'Email or password is incorrect.')
         token = secrets.token_urlsafe(32)
-        con.execute('INSERT INTO sessions VALUES (?,?,?)', (hashlib.sha256(token.encode()).hexdigest(), user['id'], time.time()+3600))
-    return {'token': token, 'user': public(user)}
+        con.execute('INSERT INTO sessions VALUES (?,?,?)', (hashlib.sha256(token.encode()).hexdigest(), fresh['id'], time.time()+3600))
+    return {'token': token, 'user': public(fresh)}
 
 @app.post('/api/logout')
 def logout(request: Request, user=Depends(current_user)):
@@ -286,28 +339,46 @@ def inspect_batch(data, con):
     return {'rows': rows, 'errors': errors, 'valid': bool(rows) and not errors and all(not row['errors'] for row in rows), 'digest': hashlib.sha256(data).hexdigest()}, documents
 
 
+def batch_snapshot(con, documents):
+    members = []
+    for member_id in sorted({document[0] for document in documents}):
+        member = con.execute('SELECT id,name,email,active FROM users WHERE id=?', (member_id,)).fetchone()
+        members.append(dict(member))
+    return json.dumps(members, sort_keys=True)
+
+
 @app.post('/api/batches/preview')
 async def preview_batch(request: Request, user=Depends(admin)):
     data = await read_batch(request)
     with db() as con:
-        result, _ = inspect_batch(data, con)
+        con.execute('BEGIN IMMEDIATE')
+        result, documents = inspect_batch(data, con)
+        con.execute('DELETE FROM batch_previews WHERE expires<=?', (time.time(),))
+        if result['valid']:
+            token = secrets.token_urlsafe(32)
+            con.execute('INSERT INTO batch_previews VALUES (?,?,?,?,?)', (hashlib.sha256(token.encode()).hexdigest(), user['id'], result['digest'], batch_snapshot(con, documents), time.time()+900))
+            result['preview_token'] = token
     return result
 
 
 @app.post('/api/batches/confirm', status_code=201)
-async def confirm_batch(request: Request, digest: str, user=Depends(admin)):
+async def confirm_batch(request: Request, digest: str, preview_token: str = '', user=Depends(admin)):
     data = await read_batch(request)
     if not hmac.compare_digest(hashlib.sha256(data).hexdigest(), digest):
         raise HTTPException(409, 'ZIP changed. Preview it again before confirming.')
     with db() as con:
-        # Serialize validation and insertion so concurrent uploads cannot partially import a batch.
         con.execute('BEGIN IMMEDIATE')
+        token_hash = hashlib.sha256(preview_token.encode()).hexdigest()
+        preview = con.execute('SELECT * FROM batch_previews WHERE token=? AND admin_id=? AND expires>?', (token_hash, user['id'], time.time())).fetchone()
+        if not preview or not hmac.compare_digest(preview['digest'], digest):
+            raise HTTPException(409, 'Preview expired or unavailable. Preview the ZIP again.')
         result, documents = inspect_batch(data, con)
-        if not result['valid']:
-            raise HTTPException(409, 'Batch validation failed. Preview again to review the errors. No slips were saved.')
+        if not result['valid'] or batch_snapshot(con, documents) != preview['snapshot']:
+            raise HTTPException(409, 'Batch or member assignments changed. Preview again. No slips were saved.')
         for member_id, year, filename, pdf in documents:
             cursor = con.execute('INSERT INTO slips(member_id,year,filename,pdf) VALUES (?,?,?,?)', (member_id, year, filename, pdf))
             con.execute("INSERT INTO audit(user_id,action,slip_id) VALUES (?,'batch_upload',?)", (user['id'], cursor.lastrowid))
+        con.execute('DELETE FROM batch_previews WHERE token=?', (token_hash,))
     return {'uploaded': len(documents)}
 
 

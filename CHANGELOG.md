@@ -49,6 +49,16 @@ No release versions or historical release dates have been assigned.
 
 ### Fixed
 
+- Bound batch confirmation to a 15-minute, single-use preview token owned by the
+  reviewing administrator and to the reviewed member identities and access status.
+- Prevented future user/slip ID reuse with an automatic migration that preserves
+  records and reserves identifiers referenced by audit history.
+- Added persistent login throttling by normalized account and client address;
+  moved password hashing outside the database write lock and rechecked access
+  before issuing sessions.
+- Cleared frontend session state after authenticated HTTP 401 responses and on
+  sign-out failures, with frontend regression tests.
+
 - Batch imports now accept a single enclosing folder and ignore macOS ZIP metadata
   such as `.DS_Store` and `__MACOSX`, while rejecting unsafe or ambiguous paths.
 - CSV imports now support UTF-8, BOM-marked UTF-16, and Windows-1252 text, with

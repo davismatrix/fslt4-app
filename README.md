@@ -56,7 +56,7 @@ Xcode and Android Studio plus their platform SDKs are required. Use your own app
 
 The API stores users, hashed opaque sessions, PDF bytes, and upload/download audit records in `data/church.db`. Passwords use scrypt; sessions expire after one hour and are held only in frontend memory. Refreshing the app requires signing in again. `CHURCH_DATA_DIR` selects persistent storage. Keep that directory private and back it up; never serve it as static content. Use a single API instance with this SQLite starter.
 
-Before handling real tax documents, add HTTPS hosting, encrypted storage/backups, login rate limiting, account recovery/password changes, administrator MFA, and an agreed retention policy. Configure production origins and operational monitoring. PDFs currently receive a file-header check, not malware scanning. This is an MVP, not a completed production security review.
+Before handling real tax documents, add HTTPS hosting, encrypted storage/backups, account recovery/password changes, administrator MFA, and an agreed retention policy. Configure production origins and operational monitoring. PDFs currently receive a file-header check, not malware scanning. This is an MVP, not a completed production security review.
 
 ## Verification
 
@@ -110,3 +110,21 @@ Sign in as an administrator and open **Church office → Member management**. Se
 - **Manage slips** lists the selected member's documents. Preview or download each document, replace its PDF (same member and year, up to 10 MB), or permanently delete it. Replacement and deletion require confirmation.
 
 All management endpoints enforce administrator access. Administrator accounts cannot be revoked or deleted through the member endpoints. Existing databases automatically gain an `active` column, defaulting current accounts to active. Management events are recorded in `management_audit`; deleted PDF bytes are no longer available through the application, but historical backups may retain copies. Revocation cannot recall PDFs already downloaded or opened on a member's device.
+
+
+## Security hardening and upgrade notes
+
+Before upgrading an existing installation, stop the backend and back up `data/church.db` (or the database under `CHURCH_DATA_DIR`). Startup automatically migrates user and slip IDs to SQLite AUTOINCREMENT, preserving current rows and reserving IDs still referenced by historical audit records. Future deletions do not free IDs for reuse. This cannot reconstruct account identities already confused by ID reuse before the upgrade. Restart the backend and rebuild/reload the frontend together.
+
+Batch previews now return an administrator-bound, single-use `preview_token`, valid for 15 minutes. Confirmation requires this token plus the same ZIP digest. The backend compares the reviewed account IDs, names, emails, and access status with their current values inside the import transaction. Changed assignments, missing/expired tokens, and replayed confirmations are rejected without saving slips. Existing browser previews must be repeated after upgrading. No PDFs are stored in preview records; expired records are removed during subsequent previews.
+
+Login attempts are limited to 10 per normalized email and 50 per client IP in a rolling 15-minute window, including successful attempts. Limits are shared through SQLite across backend restarts. A blocked request returns HTTP 429 and `Retry-After: 900`. Password hashing happens outside the database write transaction, and account access is checked again before issuing a session. IP attribution uses the server's request client address; configure trusted proxy handling correctly when deploying behind a reverse proxy. Clients on a shared IP share its limit.
+
+Expired or revoked sessions now return the frontend to sign-in on the next authenticated request and clear loaded account data and previews. Sign out clears local state even if the backend is unavailable. A network failure may prevent server-side logout; the server token still expires on its normal schedule.
+
+Frontend session-handling regression tests can be run with:
+
+```sh
+cd frontend
+npm test
+```
