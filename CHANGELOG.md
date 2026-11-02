@@ -43,6 +43,10 @@ No release versions or historical release dates have been assigned.
 
 ### Changed
 
+- Optimized mobile layouts with safe-area spacing, larger touch controls and
+  form text, stacked admin forms, card layouts for tables, portal shortcuts,
+  and a full-screen donation PDF preview on small screens.
+
 - Made the administrator Church donation slips section collapsible, including its
   year filter, with a keyboard-accessible toggle. Member documents remain visible.
 

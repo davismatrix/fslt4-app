@@ -35,10 +35,10 @@ export default function MemberManagement({members, slips, api, refresh, action, 
     <h2>Member management</h2>
     <p>View members, control access, and manage uploaded donation slips.</p>
     <label>Search members<input type="search" value={search} onChange={event => setSearch(event.target.value)} placeholder="Name or email"/></label>
-    <div className="batch-table"><table><thead><tr><th>Member</th><th>Access</th><th>Slips</th><th>Actions</th></tr></thead><tbody>
-      {members.filter(item => `${item.name} ${item.email}`.toLowerCase().includes(search.toLowerCase())).map(item => <tr key={item.id}>
-        <td>{item.name}<br/>{item.email}</td><td>{item.active ? 'Active' : 'Revoked'}</td><td>{item.slip_count}</td>
-        <td><div className="management-actions">
+    <div className="batch-table responsive-table"><table role="table"><thead><tr><th scope="col">Member</th><th scope="col">Access</th><th scope="col">Slips</th><th scope="col">Actions</th></tr></thead><tbody>
+      {members.filter(item => `${item.name} ${item.email}`.toLowerCase().includes(search.toLowerCase())).map(item => <tr key={item.id} role="row">
+        <td role="cell" data-label="Member">{item.name}<br/>{item.email}</td><td role="cell" data-label="Access">{item.active ? 'Active' : 'Revoked'}</td><td role="cell" data-label="Slips">{item.slip_count}</td>
+        <td role="cell" data-label="Actions"><div className="management-actions">
           <button className="outline" disabled={busy} onClick={() => setSelected(item.id)}>Manage slips</button>
           <button className="outline" disabled={busy} onClick={() => changeAccess(item)}>{item.active ? 'Revoke access' : 'Restore access'}</button>
           <button className="outline danger" disabled={busy} onClick={() => removeMember(item)}>Delete member</button>

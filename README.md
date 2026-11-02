@@ -128,3 +128,12 @@ Frontend session-handling regression tests can be run with:
 cd frontend
 npm test
 ```
+
+
+## Mobile layout
+
+On small screens the portal uses stacked forms, labeled cards for member and
+batch tables, larger touch controls, and shortcuts to donation slips and the
+church office. The PDF preview fills the screen and respects iPhone safe areas.
+After frontend changes, run `npm run build` and `npx cap copy ios` from `frontend`,
+then stop and rerun the app in Xcode to see the updated native bundle.

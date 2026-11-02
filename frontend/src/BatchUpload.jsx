@@ -22,8 +22,8 @@ export default function BatchUpload({api, refresh, busy, action, setNotice}) {
     {preview && <div aria-live="polite">
       <h3>Review {preview.rows.length} receipt assignments</h3>
       {preview.errors.map((error,index) => <p className="error" key={index}>{error}</p>)}
-      <div className="batch-table"><table><thead><tr><th>PDF</th><th>Member</th><th>Year</th><th>Validation</th></tr></thead><tbody>
-        {preview.rows.map(row => <tr key={row.row}><td>{row.filename}</td><td>{row.member_name}<br/>{row.email}</td><td>{row.year}</td><td>{row.errors.length ? row.errors.join('; ') : 'Ready'}</td></tr>)}
+      <div className="batch-table responsive-table"><table role="table"><thead><tr><th scope="col">PDF</th><th scope="col">Member</th><th scope="col">Year</th><th scope="col">Validation</th></tr></thead><tbody>
+        {preview.rows.map(row => <tr key={row.row} role="row"><td role="cell" data-label="PDF">{row.filename}</td><td role="cell" data-label="Member">{row.member_name}<br/>{row.email}</td><td role="cell" data-label="Year">{row.year}</td><td role="cell" data-label="Validation">{row.errors.length ? row.errors.join('; ') : 'Ready'}</td></tr>)}
       </tbody></table></div>
       <p>{preview.valid ? 'Check each assignment before confirming. All slips will be saved together.' : 'Fix the errors, select the corrected ZIP, and preview again. No slips have been saved.'}</p>
       <button disabled={busy || !preview.valid} onClick={() => action(async () => {
