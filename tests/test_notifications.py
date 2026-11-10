@@ -45,3 +45,14 @@ def test_ssl(monkeypatch, smtp):
     assert notifications.send_welcome('Jane', 'jane@example.com') == 'sent'
     smtp.assert_not_called()
     ssl_factory.return_value.__enter__.return_value.starttls.assert_not_called()
+
+
+def test_password_reset_message(smtp):
+    assert notifications.send_password_reset('Jane', 'jane@example.com', 'secret-token') == 'sent'
+    message = smtp.return_value.__enter__.return_value.send_message.call_args.args[0]
+    assert 'https://members.example.com/#reset=secret-token' in message.get_content()
+
+
+def test_password_reset_not_configured(monkeypatch, smtp):
+    monkeypatch.delenv('SMTP_HOST')
+    assert notifications.send_password_reset('Jane', 'jane@example.com', 'secret-token') == 'not_configured'

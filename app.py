@@ -9,10 +9,10 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, HTTPException, Request, Response
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, field_validator
-from notifications import send_welcome
+from notifications import send_password_reset, send_welcome
 from config import load_backend_env
 
 load_backend_env()
@@ -41,6 +41,10 @@ with db() as con:
     ''')
     if 'active' not in {row['name'] for row in con.execute('PRAGMA table_info(users)')}:
         con.execute('ALTER TABLE users ADD COLUMN active INTEGER NOT NULL DEFAULT 1')
+    if 'must_change_password' not in {row['name'] for row in con.execute('PRAGMA table_info(users)')}:
+        con.execute('ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0')
+    con.execute('CREATE TABLE IF NOT EXISTS password_resets(token TEXT PRIMARY KEY, user_id INTEGER NOT NULL, expires REAL NOT NULL)')
+    con.execute('CREATE TABLE IF NOT EXISTS account_audit(id INTEGER PRIMARY KEY, user_id INTEGER, action TEXT, created TEXT DEFAULT CURRENT_TIMESTAMP)')
     con.execute('CREATE TABLE IF NOT EXISTS management_audit(id INTEGER PRIMARY KEY, admin_id INTEGER, member_id INTEGER, action TEXT, slip_id INTEGER, created TEXT DEFAULT CURRENT_TIMESTAMP)')
 
 
@@ -76,15 +80,50 @@ def password_hash(password, salt=None):
     salt = salt or secrets.token_hex(16)
     return salt + ':' + hashlib.scrypt(password.encode(), salt=salt.encode(), n=16384, r=8, p=1).hex()
 
-def public(user):
-    return {k: user[k] for k in ('id', 'name', 'email', 'role', 'active')}
+def verify_password(password, stored):
+    return hmac.compare_digest(password_hash(password, stored.split(':')[0]), stored)
 
-def current_user(request: Request):
-    token = request.headers.get('Authorization', '').removeprefix('Bearer ')
+COMMON_PASSWORDS = {'password1234', 'password12345', '123456789012', 'qwertyuiopas', '111111111111', 'iloveyou1234', 'welcome12345', 'letmein12345', 'jesuschrist1', 'jesuslovesme', 'praisethelord', 'hallelujah12', 'changeme1234', 'administrator'}
+
+def password_problem(password, email=''):
+    """Return a user-facing reason the password is unsuitable, or None."""
+    lowered = password.lower()
+    local = email.split('@')[0].lower()
+    if not 12 <= len(password) <= 128:
+        return 'Password must be 12 to 128 characters.'
+    if len(set(password)) < 5:
+        return 'Password needs more variety; avoid repeated characters.'
+    if lowered in COMMON_PASSWORDS or lowered.rstrip('0123456789!') in COMMON_PASSWORDS:
+        return 'Password is too common. Choose a less predictable passphrase.'
+    if len(local) >= 3 and local in lowered:
+        return 'Password must not contain your email address.'
+    return None
+
+def require_password(password, email=''):
+    problem = password_problem(password, email)
+    if problem:
+        raise HTTPException(422, problem)
+
+def public(user):
+    return {**{k: user[k] for k in ('id', 'name', 'email', 'role', 'active')}, 'must_change_password': bool(user['must_change_password'])}
+
+def account_event(con, user_id, action):
+    con.execute('INSERT INTO account_audit(user_id,action) VALUES (?,?)', (user_id, action))
+
+def bearer_hash(request):
+    return hashlib.sha256(request.headers.get('Authorization', '').removeprefix('Bearer ').encode()).hexdigest()
+
+def session_user(request: Request):
+    """Any signed-in user, including one who must still replace a temporary password."""
     with db() as con:
-        user = con.execute('SELECT users.* FROM users JOIN sessions ON users.id=sessions.user_id WHERE token=? AND expires>? AND users.active=1', (hashlib.sha256(token.encode()).hexdigest(), time.time())).fetchone()
+        user = con.execute('SELECT users.* FROM users JOIN sessions ON users.id=sessions.user_id WHERE token=? AND expires>? AND users.active=1', (bearer_hash(request), time.time())).fetchone()
     if not user:
         raise HTTPException(401, 'Please sign in again.')
+    return user
+
+def current_user(user=Depends(session_user)):
+    if user['must_change_password']:
+        raise HTTPException(403, 'Change your temporary password to continue.')
     return user
 
 def admin(user=Depends(current_user)):
@@ -95,6 +134,20 @@ def admin(user=Depends(current_user)):
 class Login(BaseModel):
     email: str = Field(min_length=1, max_length=254)
     password: str = Field(min_length=1, max_length=128)
+
+class PasswordChange(BaseModel):
+    current_password: str = Field(min_length=1, max_length=128)
+    new_password: str = Field(min_length=12, max_length=128)
+
+class PasswordResetRequest(BaseModel):
+    email: str = Field(min_length=1, max_length=254)
+
+class PasswordResetConfirm(BaseModel):
+    token: str = Field(min_length=20, max_length=100)
+    password: str = Field(min_length=12, max_length=128)
+
+class TemporaryPassword(BaseModel):
+    password: str = Field(min_length=12, max_length=128)
 
 class Member(BaseModel):
     name: str = Field(min_length=1, max_length=120)
@@ -115,25 +168,33 @@ DUMMY_PASSWORD = password_hash(secrets.token_urlsafe(32))
 LOGIN_WINDOW = 15 * 60
 LOGIN_ACCOUNT_LIMIT = 10
 LOGIN_CLIENT_LIMIT = 50
+RESET_LIFETIME = 30 * 60
+
+
+def reserve_attempt(con, account_key, request):
+    """Count a credential attempt per account and client; call inside BEGIN IMMEDIATE."""
+    account = hashlib.sha256(account_key.encode()).hexdigest()
+    client = hashlib.sha256((request.client.host if request.client else 'unknown').encode()).hexdigest()
+    now = time.time()
+    con.execute('DELETE FROM login_attempts WHERE attempted<=?', (now - LOGIN_WINDOW,))
+    account_count = con.execute('SELECT count(*) FROM login_attempts WHERE account=?', (account,)).fetchone()[0]
+    client_count = con.execute('SELECT count(*) FROM login_attempts WHERE client=?', (client,)).fetchone()[0]
+    if account_count >= LOGIN_ACCOUNT_LIMIT or client_count >= LOGIN_CLIENT_LIMIT:
+        raise HTTPException(429, 'Too many attempts. Try again in 15 minutes.', headers={'Retry-After': str(LOGIN_WINDOW)})
+    con.execute('INSERT INTO login_attempts VALUES (?,?,?)', (account, client, now))
 
 
 @app.post('/api/login')
 def login(body: Login, request: Request):
-    account = hashlib.sha256(body.email.strip().lower().encode()).hexdigest()
-    client = hashlib.sha256((request.client.host if request.client else 'unknown').encode()).hexdigest()
-    now = time.time()
+    email = body.email.strip().lower()
     # Reserve an attempt under a short lock, then release it before scrypt.
     with db() as con:
         con.execute('BEGIN IMMEDIATE')
-        con.execute('DELETE FROM login_attempts WHERE attempted<=?', (now - LOGIN_WINDOW,))
-        account_count = con.execute('SELECT count(*) FROM login_attempts WHERE account=?', (account,)).fetchone()[0]
-        client_count = con.execute('SELECT count(*) FROM login_attempts WHERE client=?', (client,)).fetchone()[0]
-        if account_count >= LOGIN_ACCOUNT_LIMIT or client_count >= LOGIN_CLIENT_LIMIT:
-            raise HTTPException(429, 'Too many sign-in attempts. Try again in 15 minutes.', headers={'Retry-After': str(LOGIN_WINDOW)})
-        con.execute('INSERT INTO login_attempts VALUES (?,?,?)', (account, client, now))
-        user = con.execute('SELECT * FROM users WHERE email=?', (body.email.strip().lower(),)).fetchone()
+        reserve_attempt(con, email, request)
+        con.execute('DELETE FROM sessions WHERE expires<=?', (time.time(),))
+        user = con.execute('SELECT * FROM users WHERE email=?', (email,)).fetchone()
     expected = user['password'] if user else DUMMY_PASSWORD
-    valid = hmac.compare_digest(password_hash(body.password, expected.split(':')[0]), expected)
+    valid = verify_password(body.password, expected)
     if not valid or not user or not user['active']:
         raise HTTPException(401, 'Email or password is incorrect.')
     with db() as con:
@@ -147,15 +208,75 @@ def login(body: Login, request: Request):
     return {'token': token, 'user': public(fresh)}
 
 @app.post('/api/logout')
-def logout(request: Request, user=Depends(current_user)):
-    token = request.headers.get('Authorization', '').removeprefix('Bearer ')
+def logout(request: Request, user=Depends(session_user)):
     with db() as con:
-        con.execute('DELETE FROM sessions WHERE token=?', (hashlib.sha256(token.encode()).hexdigest(),))
+        con.execute('DELETE FROM sessions WHERE token=?', (bearer_hash(request),))
     return {'ok': True}
 
 @app.get('/api/me')
-def me(user=Depends(current_user)):
+def me(user=Depends(session_user)):
     return public(user)
+
+@app.post('/api/password')
+def change_password(body: PasswordChange, request: Request, user=Depends(session_user)):
+    with db() as con:
+        con.execute('BEGIN IMMEDIATE')
+        reserve_attempt(con, 'password-change:' + str(user['id']), request)
+    if not verify_password(body.current_password, user['password']):
+        raise HTTPException(400, 'Current password is incorrect.')
+    if body.new_password == body.current_password:
+        raise HTTPException(422, 'Choose a password different from your current one.')
+    require_password(body.new_password, user['email'])
+    new_hash = password_hash(body.new_password)
+    with db() as con:
+        con.execute('BEGIN IMMEDIATE')
+        # Reject if the password or access changed while hashing.
+        if not con.execute('UPDATE users SET password=?, must_change_password=0 WHERE id=? AND password=? AND active=1', (new_hash, user['id'], user['password'])).rowcount:
+            raise HTTPException(409, 'Your account changed. Sign in again.')
+        # Other devices are signed out; this session stays valid.
+        con.execute('DELETE FROM sessions WHERE user_id=? AND token<>?', (user['id'], bearer_hash(request)))
+        con.execute('DELETE FROM password_resets WHERE user_id=?', (user['id'],))
+        account_event(con, user['id'], 'password_change')
+        fresh = con.execute('SELECT * FROM users WHERE id=?', (user['id'],)).fetchone()
+    return public(fresh)
+
+@app.post('/api/password-reset')
+def request_password_reset(body: PasswordResetRequest, request: Request, background: BackgroundTasks):
+    email = body.email.strip().lower()
+    with db() as con:
+        con.execute('BEGIN IMMEDIATE')
+        reserve_attempt(con, 'reset:' + email, request)
+        con.execute('DELETE FROM password_resets WHERE expires<=?', (time.time(),))
+        user = con.execute('SELECT * FROM users WHERE email=? AND active=1', (email,)).fetchone()
+        if user:
+            token = secrets.token_urlsafe(32)
+            # Only the newest link works.
+            con.execute('DELETE FROM password_resets WHERE user_id=?', (user['id'],))
+            con.execute('INSERT INTO password_resets VALUES (?,?,?)', (hashlib.sha256(token.encode()).hexdigest(), user['id'], time.time() + RESET_LIFETIME))
+            account_event(con, user['id'], 'password_reset_requested')
+            # Email is sent after the response so timing does not reveal accounts.
+            background.add_task(send_password_reset, user['name'], user['email'], token)
+    return {'ok': True}
+
+@app.post('/api/password-reset/confirm')
+def confirm_password_reset(body: PasswordResetConfirm):
+    token_hash = hashlib.sha256(body.token.encode()).hexdigest()
+    with db() as con:
+        user = con.execute('SELECT users.* FROM users JOIN password_resets ON users.id=password_resets.user_id WHERE token=? AND expires>? AND users.active=1', (token_hash, time.time())).fetchone()
+    if not user:
+        raise HTTPException(400, 'This reset link is invalid or has expired. Request a new one.')
+    require_password(body.password, user['email'])
+    new_hash = password_hash(body.password)
+    with db() as con:
+        con.execute('BEGIN IMMEDIATE')
+        # Single use: consuming the token and updating the password are atomic.
+        if not con.execute('DELETE FROM password_resets WHERE token=? AND expires>?', (token_hash, time.time())).rowcount:
+            raise HTTPException(400, 'This reset link is invalid or has expired. Request a new one.')
+        con.execute('UPDATE users SET password=?, must_change_password=0 WHERE id=? AND active=1', (new_hash, user['id']))
+        con.execute('DELETE FROM sessions WHERE user_id=?', (user['id'],))
+        con.execute('DELETE FROM password_resets WHERE user_id=?', (user['id'],))
+        account_event(con, user['id'], 'password_reset')
+    return {'ok': True}
 
 @app.get('/api/slips')
 def slips(user=Depends(current_user)):
@@ -192,9 +313,10 @@ def members(user=Depends(admin)):
 
 @app.post('/api/members', status_code=201)
 def create_member(body: Member, user=Depends(admin)):
+    require_password(body.password, body.email)
     with db() as con:
         try:
-            cursor = con.execute("INSERT INTO users(name,email,password,role) VALUES (?,?,?,'member')", (body.name.strip(),body.email.strip().lower(),password_hash(body.password)))
+            cursor = con.execute("INSERT INTO users(name,email,password,role,must_change_password) VALUES (?,?,?,'member',1)", (body.name.strip(),body.email.strip().lower(),password_hash(body.password)))
         except sqlite3.IntegrityError:
             raise HTTPException(409, 'An account already exists for this email.')
     notification = send_welcome(body.name.strip(), body.email)
@@ -412,6 +534,22 @@ def member_access(member_id: int, body: MemberAccess, user=Depends(admin)):
     return {'active': body.active}
 
 
+@app.post('/api/members/{member_id}/password')
+def reset_member_password(member_id: int, body: TemporaryPassword, user=Depends(admin)):
+    with db() as con:
+        member = require_member(con, member_id)
+    require_password(body.password, member['email'])
+    new_hash = password_hash(body.password)
+    with db() as con:
+        con.execute('BEGIN IMMEDIATE')
+        require_member(con, member_id)
+        con.execute('UPDATE users SET password=?, must_change_password=1 WHERE id=?', (new_hash, member_id))
+        con.execute('DELETE FROM sessions WHERE user_id=?', (member_id,))
+        con.execute('DELETE FROM password_resets WHERE user_id=?', (member_id,))
+        management_event(con, user['id'], member_id, 'reset_password')
+    return {'ok': True}
+
+
 @app.delete('/api/members/{member_id}')
 def delete_member(member_id: int, user=Depends(admin)):
     with db() as con:
@@ -419,6 +557,7 @@ def delete_member(member_id: int, user=Depends(admin)):
         require_member(con, member_id)
         management_event(con, user['id'], member_id, 'delete_member')
         con.execute('DELETE FROM sessions WHERE user_id=?', (member_id,))
+        con.execute('DELETE FROM password_resets WHERE user_id=?', (member_id,))
         con.execute('DELETE FROM slips WHERE member_id=?', (member_id,))
         con.execute('DELETE FROM users WHERE id=?', (member_id,))
     return {'ok': True}

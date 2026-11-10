@@ -12,6 +12,15 @@ No release versions or historical release dates have been assigned.
 
 ### Added
 
+- Password lifecycle: self-service password change, email "Forgot password?" reset
+  links (single-use, 30 minutes, fragment-carried token), administrator-issued
+  temporary passwords, mandatory change of temporary passwords at first sign-in,
+  and `python manage.py reset-password` for administrator lockout recovery.
+- Shared password policy (length, variety, common-password and email checks) for
+  member creation, changes, resets, and `manage.py`, with confirm-password fields.
+- `account_audit` records for password changes and resets; expired sessions are
+  purged at sign-in.
+
 - Automatic backend `.env` loading from the repository root, preserving exported
   environment variables, with an updated configuration template.
 

@@ -1,4 +1,5 @@
 import React, {useState} from 'react';
+import {generatePassword} from './PasswordForms';
 
 export default function MemberManagement({members, slips, api, refresh, action, busy, setNotice, onPreview, onDownload}) {
   const [search, setSearch] = useState('');
@@ -12,6 +13,14 @@ export default function MemberManagement({members, slips, api, refresh, action, 
       await api(`/members/${item.id}/access`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({active})});
       await refresh();
       setNotice(`Access ${active ? 'restored' : 'revoked'} for ${item.name}.`);
+    });
+  }
+  function resetPassword(item) {
+    if (!window.confirm(`Set a new temporary password for ${item.name}? They will be signed out and must choose their own password at next sign-in.`)) return;
+    const password = generatePassword();
+    action(async () => {
+      await api(`/members/${item.id}/password`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({password})});
+      setNotice(`Temporary password for ${item.name}: ${password} — share it privately. It will not be shown again. Members can also use “Forgot password?” if email is configured.`);
     });
   }
   function removeMember(item) {
@@ -41,6 +50,7 @@ export default function MemberManagement({members, slips, api, refresh, action, 
         <td role="cell" data-label="Actions"><div className="management-actions">
           <button className="outline" disabled={busy} onClick={() => setSelected(item.id)}>Manage slips</button>
           <button className="outline" disabled={busy} onClick={() => changeAccess(item)}>{item.active ? 'Revoke access' : 'Restore access'}</button>
+          <button className="outline" disabled={busy} onClick={() => resetPassword(item)}>Reset password</button>
           <button className="outline danger" disabled={busy} onClick={() => removeMember(item)}>Delete member</button>
         </div></td>
       </tr>)}

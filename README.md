@@ -26,7 +26,7 @@ npm run dev
 
 Open http://localhost:5173 and sign in with the administrator you created. API documentation is at http://localhost:8000/docs.
 
-1. In Church office, create a member with an initial password of at least 12 characters. Share credentials privately.
+1. In Church office, create a member with a temporary password of at least 12 characters. Share it privately; the member must choose their own password at first sign-in.
 2. Upload an existing PDF donation slip for that member and tax year (10 MB maximum). Duplicate member/year uploads are rejected.
 3. Sign out and sign in as that member to download the PDF. Members cannot list or download other members' documents.
 
@@ -56,7 +56,7 @@ Xcode and Android Studio plus their platform SDKs are required. Use your own app
 
 The API stores users, hashed opaque sessions, PDF bytes, and upload/download audit records in `data/church.db`. Passwords use scrypt; sessions expire after one hour and are held only in frontend memory. Refreshing the app requires signing in again. `CHURCH_DATA_DIR` selects persistent storage. Keep that directory private and back it up; never serve it as static content. Use a single API instance with this SQLite starter.
 
-Before handling real tax documents, add HTTPS hosting, encrypted storage/backups, account recovery/password changes, administrator MFA, and an agreed retention policy. Configure production origins and operational monitoring. PDFs currently receive a file-header check, not malware scanning. This is an MVP, not a completed production security review.
+Before handling real tax documents, add HTTPS hosting, encrypted storage/backups, administrator MFA, and an agreed retention policy. Configure production origins and operational monitoring. PDFs currently receive a file-header check, not malware scanning. This is an MVP, not a completed production security review.
 
 ## Verification
 
@@ -100,6 +100,18 @@ If a CSV encoding error occurs, use Excel **Save As → CSV UTF-8 (Comma delimit
 Select **Preview** beside an available donation slip to open it in a dialog. The dialog includes Download PDF and Close preview controls; Escape also closes it. Members can preview only their own documents; administrators can preview all uploaded slips. Preview access is audited, responses disable caching, and temporary browser URLs are revoked when the dialog closes. The authenticated PDF request does not place session tokens in URLs.
 
 Inline viewing uses the browser's built-in PDF support. If the browser or mobile WebView cannot render the document, use Download PDF to view or save it through the existing download/share flow. Browser and native device rendering require manual verification.
+
+## Passwords and account recovery
+
+Passwords must be 12–128 characters, must not contain the account's email name, and are checked against a short list of common passwords. The same rules apply to member creation, password changes, resets, and `manage.py`.
+
+- **Temporary passwords.** New members and members whose password an administrator resets must choose a new password before they can use the portal. Until then only `/api/me`, `/api/logout`, and `/api/password` accept their session.
+- **Change password.** Signed-in users select **Change password** in the header. The current password is required, attempts are throttled like sign-in, and all other sessions are signed out.
+- **Forgot password.** **Forgot password?** on the sign-in page emails a single-use link valid for 30 minutes (requires SMTP and `PORTAL_URL`). The token is in the URL fragment (`#reset=…`), so it is not sent to servers or Referer headers. The response is the same whether or not the account exists, and email is sent after the response. Requesting a new link invalidates the previous one. Completing a reset signs out all sessions. Revoked accounts cannot reset.
+- **Administrator reset.** In Member management, **Reset password** generates a temporary password, signs the member out, and shows it once for private sharing. The action is recorded in `management_audit`.
+- **Administrator lockout.** Run `python manage.py reset-password` on the server to set a new administrator password. `python manage.py` (create administrator) now asks for confirmation and applies the password rules.
+
+Self-service password events are recorded in `account_audit`. Existing databases gain a `must_change_password` column (existing accounts are unaffected) and `password_resets`/`account_audit` tables automatically. Mobile builds open reset links in the web portal at `PORTAL_URL`.
 
 ## Admin member management
 
