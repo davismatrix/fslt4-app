@@ -50,9 +50,23 @@ def test_ssl(monkeypatch, smtp):
 def test_password_reset_message(smtp):
     assert notifications.send_password_reset('Jane', 'jane@example.com', 'secret-token') == 'sent'
     message = smtp.return_value.__enter__.return_value.send_message.call_args.args[0]
-    assert 'https://members.example.com/#reset=secret-token' in message.get_content()
+    assert 'https://members.example.com/password#reset=secret-token' in message.get_content()
 
 
 def test_password_reset_not_configured(monkeypatch, smtp):
     monkeypatch.delenv('SMTP_HOST')
     assert notifications.send_password_reset('Jane', 'jane@example.com', 'secret-token') == 'not_configured'
+
+
+def test_invite_message(smtp):
+    assert notifications.send_invite('Jane', 'jane@example.com', 'invite-token') == 'sent'
+    message = smtp.return_value.__enter__.return_value.send_message.call_args.args[0]
+    assert 'https://members.example.com/password#invite=invite-token' in message.get_content()
+    assert '7 days' in message.get_content()
+
+
+@pytest.mark.parametrize('by_office, phrase', [(False, 'was just changed'), (True, 'temporary password')])
+def test_password_changed_message(smtp, by_office, phrase):
+    assert notifications.send_password_changed('Jane', 'jane@example.com', by_office) == 'sent'
+    message = smtp.return_value.__enter__.return_value.send_message.call_args.args[0]
+    assert phrase in message.get_content() and 'contact the church office' in message.get_content()

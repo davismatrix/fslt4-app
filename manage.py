@@ -7,6 +7,7 @@ import sqlite3
 import sys
 from getpass import getpass
 from app import db, password_hash, password_problem
+from notifications import send_password_changed
 
 
 def prompt_password(email):
@@ -36,7 +37,7 @@ def create_admin():
 def reset_admin_password():
     email = input('Administrator email: ').strip().lower()
     with db() as con:
-        user = con.execute("SELECT id FROM users WHERE email=? AND role='admin'", (email,)).fetchone()
+        user = con.execute("SELECT id,name FROM users WHERE email=? AND role='admin'", (email,)).fetchone()
     if not user:
         raise SystemExit('No administrator has this email.')
     password = prompt_password(email)
@@ -46,6 +47,7 @@ def reset_admin_password():
         con.execute('DELETE FROM password_resets WHERE user_id=?', (user['id'],))
         con.execute("INSERT INTO account_audit(user_id,action) VALUES (?,'admin_password_reset_cli')", (user['id'],))
     print('Administrator password updated. Existing sessions were signed out.')
+    print('Password-change email:', send_password_changed(user['name'], email))
 
 
 if __name__ == '__main__':

@@ -1,0 +1,12 @@
+{
+  "applinks": {
+    "details": [
+      {
+        "appIDs": ["YOUR_TEAM_ID.ca.loveassembly.members"],
+        "components": [
+          {"/": "/password", "comment": "Member invitation and password reset links"}
+        ]
+      }
+    ]
+  }
+}

@@ -32,8 +32,48 @@ def send_welcome(name: str, email: str) -> str:
         f'Thank you,\n{church}\n')
 
 
+def password_link(url: str, kind: str, token: str) -> str:
+    """Build an invite/reset link. /password is the path mobile apps claim as a universal/app link.
+
+    The token is in the URL fragment, so it is not sent to servers or in Referer headers.
+    """
+    return f'{url.rstrip("/")}/password#{kind}={token}'
+
+
+def send_invite(name: str, email: str, token: str) -> str:
+    """Email a single-use link for a new member to choose their own password."""
+    url = portal_url()
+    if not url:
+        return 'not_configured'
+    church = os.environ.get('CHURCH_NAME', 'Love Assembly')
+    return send(email, f'Welcome to {church} member portal',
+        f'Hello {name},\n\n'
+        f'Your {church} member account has been created. '
+        'You can sign in to access your giving donation slips when they are available.\n\n'
+        f'Choose your password using this link within 7 days:\n{password_link(url, "invite", token)}\n\n'
+        f'Sign-in email: {email}\n\n'
+        'The link works once. If it expires, use "Forgot password?" on the sign-in page '
+        'or contact the church office.\n\n'
+        f'Thank you,\n{church}\n')
+
+
+def send_password_changed(name: str, email: str, by_office: bool = False) -> str:
+    """Tell the account owner their password changed, so an unexpected change is noticed."""
+    url = portal_url()
+    if not url:
+        return 'not_configured'
+    church = os.environ.get('CHURCH_NAME', 'Love Assembly')
+    what = ('The church office set a temporary password for your account. '
+            'You will be asked to choose your own password at your next sign-in.') if by_office else \
+        'The password for your account was just changed, and other devices were signed out.'
+    return send(email, f'Your {church} member portal password was changed',
+        f'Hello {name},\n\n{what}\n\n'
+        'If you did not expect this, contact the church office right away.\n\n'
+        f'Member portal: {url}\n\nThank you,\n{church}\n')
+
+
 def send_password_reset(name: str, email: str, token: str) -> str:
-    """Email a single-use reset link. The token is in the URL fragment, so it is not sent to servers or in Referer headers."""
+    """Email a single-use reset link."""
     url = portal_url()
     if not url:
         return 'not_configured'
@@ -41,7 +81,7 @@ def send_password_reset(name: str, email: str, token: str) -> str:
     return send(email, f'Reset your {church} member portal password',
         f'Hello {name},\n\n'
         f'We received a request to reset the password for your {church} member portal account.\n\n'
-        f'Choose a new password using this link within 30 minutes:\n{url.rstrip("/")}/#reset={token}\n\n'
+        f'Choose a new password using this link within 30 minutes:\n{password_link(url, "reset", token)}\n\n'
         'The link works once. If you did not request this, you can ignore this email; '
         'your password will not change.\n\n'
         f'Thank you,\n{church}\n')

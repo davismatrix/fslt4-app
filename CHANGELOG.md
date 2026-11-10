@@ -12,6 +12,18 @@ No release versions or historical release dates have been assigned.
 
 ### Added
 
+- Email invitations for new members: leave the password blank to send a single-use,
+  7-day link to choose their own password; Invited status and Resend invite in
+  Member management.
+- Breached-password rejection using the Have I Been Pwned k-anonymity range API
+  (fails open; `PASSWORD_BREACH_CHECK=off` disables it).
+- Password-changed notification emails for self-service changes, resets, office-issued
+  temporary passwords, and `manage.py reset-password`.
+- `TRUSTED_PROXIES` support so sign-in throttling identifies real client addresses
+  behind a reverse proxy, using the nearest untrusted `X-Forwarded-For` hop.
+- Mobile app handling of invitation/reset links through `@capacitor/app`, with
+  universal link and App Link association templates in `frontend/deep-links/`.
+
 - Password lifecycle: self-service password change, email "Forgot password?" reset
   links (single-use, 30 minutes, fragment-carried token), administrator-issued
   temporary passwords, mandatory change of temporary passwords at first sign-in,
@@ -52,6 +64,9 @@ No release versions or historical release dates have been assigned.
 
 ### Changed
 
+- Invitation and reset links now use the `/password` path so mobile apps can claim
+  them; web hosts must serve `index.html` for `/password`.
+
 - Optimized mobile layouts with safe-area spacing, larger touch controls and
   form text, stacked admin forms, card layouts for tables, portal shortcuts,
   and a full-screen donation PDF preview on small screens.
@@ -64,6 +79,11 @@ No release versions or historical release dates have been assigned.
   documentation, and generated download filenames.
 
 ### Fixed
+
+- Successful sign-ins no longer count toward the account throttle; per-account limits
+  now apply per client address (10) with a cross-address cap (100), so one attacker
+  cannot lock a member out everywhere.
+- The test suite no longer loads live SMTP settings from `.env` and cannot send email.
 
 - Bound batch confirmation to a 15-minute, single-use preview token owned by the
   reviewing administrator and to the reviewed member identities and access status.

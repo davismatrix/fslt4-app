@@ -23,6 +23,12 @@ export default function MemberManagement({members, slips, api, refresh, action, 
       setNotice(`Temporary password for ${item.name}: ${password} — share it privately. It will not be shown again. Members can also use “Forgot password?” if email is configured.`);
     });
   }
+  function resendInvite(item) {
+    action(async () => {
+      const {notification} = await (await api(`/members/${item.id}/invite`, {method:'POST'})).json();
+      setNotice(notification === 'sent' ? `New invitation sent to ${item.email}. Earlier links no longer work.` : notification === 'not_configured' ? 'Email delivery is not configured. Use Reset password to issue a temporary password instead.' : 'The invitation email could not be sent. Try again later, or use Reset password.');
+    });
+  }
   function removeMember(item) {
     if (!window.confirm(`Permanently delete ${item.name} (${item.email}) and all ${item.slip_count} donation slips? This cannot be undone. To keep their slips, revoke access instead.`)) return;
     action(async () => {
@@ -46,10 +52,11 @@ export default function MemberManagement({members, slips, api, refresh, action, 
     <label>Search members<input type="search" value={search} onChange={event => setSearch(event.target.value)} placeholder="Name or email"/></label>
     <div className="batch-table responsive-table"><table role="table"><thead><tr><th scope="col">Member</th><th scope="col">Access</th><th scope="col">Slips</th><th scope="col">Actions</th></tr></thead><tbody>
       {members.filter(item => `${item.name} ${item.email}`.toLowerCase().includes(search.toLowerCase())).map(item => <tr key={item.id} role="row">
-        <td role="cell" data-label="Member">{item.name}<br/>{item.email}</td><td role="cell" data-label="Access">{item.active ? 'Active' : 'Revoked'}</td><td role="cell" data-label="Slips">{item.slip_count}</td>
+        <td role="cell" data-label="Member">{item.name}<br/>{item.email}</td><td role="cell" data-label="Access">{!item.active ? 'Revoked' : item.invite_pending ? 'Invited' : 'Active'}</td><td role="cell" data-label="Slips">{item.slip_count}</td>
         <td role="cell" data-label="Actions"><div className="management-actions">
           <button className="outline" disabled={busy} onClick={() => setSelected(item.id)}>Manage slips</button>
           <button className="outline" disabled={busy} onClick={() => changeAccess(item)}>{item.active ? 'Revoke access' : 'Restore access'}</button>
+          {item.invite_pending && item.active && <button className="outline" disabled={busy} onClick={() => resendInvite(item)}>Resend invite</button>}
           <button className="outline" disabled={busy} onClick={() => resetPassword(item)}>Reset password</button>
           <button className="outline danger" disabled={busy} onClick={() => removeMember(item)}>Delete member</button>
         </div></td>

@@ -18,7 +18,7 @@ function NewPasswordFields() {
   return <>
     <label>New password<input name="password" type="password" minLength={12} maxLength={128} autoComplete="new-password" required/></label>
     <label>Confirm new password<input name="confirm" type="password" minLength={12} maxLength={128} autoComplete="new-password" required/></label>
-    <small>Use at least 12 characters. A short phrase of unrelated words works well. Avoid your email address.</small>
+    <small>Use at least 12 characters. A short phrase of unrelated words works well. Avoid your email address and passwords used on other sites; known breached passwords are rejected.</small>
   </>;
 }
 
@@ -73,7 +73,7 @@ export function ForgotPassword({api, action, busy, setNotice, onBack}) {
   </section>;
 }
 
-export function ResetPassword({token, api, action, busy, setNotice, onDone}) {
+export function ResetPassword({token, invite, api, action, busy, setNotice, onDone}) {
   const [problem, setProblem] = useState('');
   function submit(event) {
     event.preventDefault();
@@ -84,12 +84,13 @@ export function ResetPassword({token, api, action, busy, setNotice, onDone}) {
     action(async () => {
       await api('/password-reset/confirm', json({token, password:data.password}));
       onDone();
-      setNotice('Your password has been updated. Sign in with your new password.');
+      setNotice(invite ? 'Your password is set. Sign in to view your donation slips.' : 'Your password has been updated. Sign in with your new password.');
     });
   }
   return <section className="login password-panel">
-    <span className="eyebrow">RESET PASSWORD</span>
-    <h2>Choose a new password</h2>
+    <span className="eyebrow">{invite ? 'WELCOME' : 'RESET PASSWORD'}</span>
+    <h2>{invite ? 'Choose your password' : 'Choose a new password'}</h2>
+    {invite && <p>Set a password to finish creating your member portal account.</p>}
     {problem && <p className="error" role="alert">{problem}</p>}
     <form onSubmit={submit}>
       <NewPasswordFields/>

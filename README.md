@@ -26,7 +26,7 @@ npm run dev
 
 Open http://localhost:5173 and sign in with the administrator you created. API documentation is at http://localhost:8000/docs.
 
-1. In Church office, create a member with a temporary password of at least 12 characters. Share it privately; the member must choose their own password at first sign-in.
+1. In Church office, create a member. Leave the password blank to email them a 7-day link to choose their own password (recommended, requires SMTP), or enter a temporary password to share privately; it must be changed at first sign-in.
 2. Upload an existing PDF donation slip for that member and tax year (10 MB maximum). Duplicate member/year uploads are rejected.
 3. Sign out and sign in as that member to download the PDF. Members cannot list or download other members' documents.
 
@@ -103,15 +103,49 @@ Inline viewing uses the browser's built-in PDF support. If the browser or mobile
 
 ## Passwords and account recovery
 
-Passwords must be 12–128 characters, must not contain the account's email name, and are checked against a short list of common passwords. The same rules apply to member creation, password changes, resets, and `manage.py`.
+Passwords must be 12–128 characters, must not contain the account's email name, must not be a common password, and must not appear in the [Have I Been Pwned](https://haveibeenpwned.com/Passwords) breach corpus. The same rules apply to member creation, password changes, resets, invitations, and `manage.py`.
 
-- **Temporary passwords.** New members and members whose password an administrator resets must choose a new password before they can use the portal. Until then only `/api/me`, `/api/logout`, and `/api/password` accept their session.
+The breach check uses k-anonymity: only the first 5 hex characters of the password's SHA-1 hash are sent to `api.pwnedpasswords.com`, with response padding enabled. If the service is unreachable within 3 seconds, the password is accepted and a warning is logged. Set `PASSWORD_BREACH_CHECK=off` to disable it, for example on servers without outbound internet access.
+
+- **Invitations (recommended).** Create a member with the password left blank. They receive a single-use link valid for 7 days to choose their own password, so nobody else ever knows it. Member management shows them as **Invited**, with **Resend invite** (which cancels earlier links). Invited members can also use **Forgot password?**.
+- **Temporary passwords.** Members created with a password, and members whose password an administrator resets, must choose a new password before using the portal. Until then only `/api/me`, `/api/logout`, and `/api/password` accept their session.
 - **Change password.** Signed-in users select **Change password** in the header. The current password is required, attempts are throttled like sign-in, and all other sessions are signed out.
-- **Forgot password.** **Forgot password?** on the sign-in page emails a single-use link valid for 30 minutes (requires SMTP and `PORTAL_URL`). The token is in the URL fragment (`#reset=…`), so it is not sent to servers or Referer headers. The response is the same whether or not the account exists, and email is sent after the response. Requesting a new link invalidates the previous one. Completing a reset signs out all sessions. Revoked accounts cannot reset.
+- **Forgot password.** **Forgot password?** on the sign-in page emails a single-use link valid for 30 minutes. The response is the same whether or not the account exists, and email is sent after the response. A new link invalidates the previous one. Completing a reset signs out all sessions. Revoked accounts cannot reset.
 - **Administrator reset.** In Member management, **Reset password** generates a temporary password, signs the member out, and shows it once for private sharing. The action is recorded in `management_audit`.
-- **Administrator lockout.** Run `python manage.py reset-password` on the server to set a new administrator password. `python manage.py` (create administrator) now asks for confirmation and applies the password rules.
+- **Administrator lockout.** Run `python manage.py reset-password` on the server. `python manage.py` (create administrator) asks for confirmation and applies the password rules.
+- **Change notifications.** Members are emailed when their password is changed or reset, or when the office issues a temporary password, so an unexpected change is noticed. Accepting an invitation does not send one.
 
-Self-service password events are recorded in `account_audit`. Existing databases gain a `must_change_password` column (existing accounts are unaffected) and `password_resets`/`account_audit` tables automatically. Mobile builds open reset links in the web portal at `PORTAL_URL`.
+Invitation and reset links have the form `PORTAL_URL/password#invite=…` or `#reset=…`. The token is in the URL fragment, so it is not sent to servers or in Referer headers, and the app removes it from the address bar once read. Configure your web host to serve `index.html` for `/password` (the Vite dev server already does).
+
+Self-service password events are recorded in `account_audit`. Existing databases gain `must_change_password` and `invite_pending` columns (existing accounts are unaffected) and `password_resets`/`account_audit` tables automatically.
+
+### Sign-in throttling and reverse proxies
+
+Each account allows 10 attempts per client address and 100 across all addresses per 15 minutes; each client address allows 50 attempts. A successful sign-in clears that client's attempts for the account, so normal use and a mistyped password never accumulate into a lockout, and someone guessing from one network cannot lock a member out elsewhere.
+
+Behind a reverse proxy or load balancer, set `TRUSTED_PROXIES` to the comma-separated addresses of the proxies that connect to the API (for example `127.0.0.1`). The API then uses the nearest `X-Forwarded-For` address that is not a trusted proxy. Without it, every request appears to come from the proxy and all users share one client limit. `X-Forwarded-For` is ignored from any other peer, so it cannot be spoofed to evade limits.
+
+### Opening invitation and reset links in the mobile app
+
+Links open the web portal by default. To open them in the installed app instead, the portal domain (the host in `PORTAL_URL`) must prove it is associated with the app. Universal links and App Links need a real HTTPS domain; development tunnels and `localhost` will not work. The app's `appUrlOpen` listener (via `@capacitor/app`) then shows the set-password screen.
+
+1. **Web host.** Copy the templates in `frontend/deep-links/` into `frontend/public/.well-known/` and fill them in:
+   - `apple-app-site-association`: replace `YOUR_TEAM_ID` with your Apple Developer Team ID.
+   - `assetlinks.json`: replace the fingerprint with your Android release signing certificate's SHA-256 (`keytool -list -v -keystore your.keystore`, or Play Console → App integrity when using Play App Signing).
+
+   Serve both at `https://<portal-host>/.well-known/…` over HTTPS, with no redirects and `Content-Type: application/json`.
+2. **iOS.** In Xcode, open the App target → **Signing & Capabilities** → **+ Capability** → **Associated Domains**, and add `applinks:<portal-host>`. This requires a paid Apple Developer account; personal (free) teams cannot sign the capability, which is why it is not enabled in the checked-in project.
+3. **Android.** After `npx cap add android`, add this inside the main `<activity>` in `android/app/src/main/AndroidManifest.xml`:
+
+   ```xml
+   <intent-filter android:autoVerify="true">
+       <action android:name="android.intent.action.VIEW" />
+       <category android:name="android.intent.category.DEFAULT" />
+       <category android:name="android.intent.category.BROWSABLE" />
+       <data android:scheme="https" android:host="your-portal-host" android:path="/password" />
+   </intent-filter>
+   ```
+4. Run `npm run mobile:sync`, reinstall the app, and test by tapping a link in Mail or Gmail. iOS does not open universal links typed or pasted into Safari's address bar.
 
 ## Admin member management
 
