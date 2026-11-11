@@ -1,5 +1,6 @@
 import React, {useState} from 'react';
 import {generatePassword} from './PasswordForms';
+import {UPLOAD_TIMEOUT} from './apiClient';
 
 export default function MemberManagement({members, slips, api, refresh, action, busy, setNotice, onPreview, onDownload}) {
   const [search, setSearch] = useState('');
@@ -79,7 +80,7 @@ export default function MemberManagement({members, slips, api, refresh, action, 
           const file = new FormData(form).get('pdf');
           if (!window.confirm(`Replace the ${slip.year} donation slip for ${member.name}? The previous PDF will be overwritten.`)) return;
           action(async () => {
-            await api(`/slips/${slip.id}/replace`, {method:'POST', headers:{'Content-Type':'application/pdf'}, body:file});
+            await api(`/slips/${slip.id}/replace`, {method:'POST', headers:{'Content-Type':'application/pdf'}, body:file, timeout:UPLOAD_TIMEOUT});
             form.reset();
             await refresh();
             setNotice('Donation slip replaced.');

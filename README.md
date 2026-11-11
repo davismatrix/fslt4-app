@@ -36,7 +36,7 @@ The app distributes church-prepared receipts; it does not calculate donations or
 
 The same React frontend can be packaged using Capacitor. Native downloads use the filesystem and OS share sheet; temporary cached PDFs are removed after sharing.
 
-Set `VITE_API_URL` in `frontend/.env` to your deployed HTTPS backend origin. Configure backend `ALLOWED_ORIGINS` with the frontend's exact origins. The defaults include local web and Capacitor origins.
+Set `VITE_API_URL` in `frontend/.env.production` (used by `npm run build` and `mobile:sync`) to your deployed HTTPS backend origin. Leave it unset in `frontend/.env` during `npm run dev` so the browser uses the Vite `/api` proxy on the same origin. Configure backend `ALLOWED_ORIGINS` with the frontend's exact origins. The defaults include local web and Capacitor origins.
 
 ```sh
 cd frontend

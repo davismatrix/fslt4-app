@@ -91,3 +91,6 @@ button{white-space:normal}
 @media(max-height:500px) and (orientation:landscape){
  .slip-preview{height:100dvh;max-height:100dvh}.preview-footer{flex-direction:row;align-items:center}.preview-footer p{max-width:60%}.preview-footer button{width:auto}.preview-header h2{font-size:16px}
 }
+
+/* Keep action results visible wherever the admin is scrolled. */
+.messages{position:sticky;top:12px;z-index:5;display:grid;gap:8px}.messages p{margin:0 0 8px;display:flex;align-items:flex-start;justify-content:space-between;gap:12px;box-shadow:0 4px 14px rgba(32,63,55,.12)}.dismiss{background:transparent;color:inherit;padding:0 4px;font-size:20px;line-height:1}

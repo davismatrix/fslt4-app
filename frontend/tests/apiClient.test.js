@@ -19,3 +19,25 @@ test('logout clears local state even when the server is unavailable', async () =
   await assert.rejects(logoutSession(async () => {throw Error('offline');}, () => {cleared = true;}), /offline/);
   assert.equal(cleared, true);
 });
+
+test('a stalled request times out with an actionable message', async () => {
+  const original = globalThis.fetch;
+  // Never resolves unless aborted, like a dropped tunnel connection.
+  globalThis.fetch = (url, {signal}) => new Promise((_, reject) => signal.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError'))));
+  try {
+    await assert.rejects(apiRequest('', 't', '/members/1/password', {method:'POST', timeout:20}, () => {}), /did not respond in time/);
+  } finally {globalThis.fetch = original;}
+});
+
+test('caller cancellation is forwarded and network failures are explained', async () => {
+  const original = globalThis.fetch;
+  globalThis.fetch = (url, {signal}) => new Promise((_, reject) => signal.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError'))));
+  try {
+    const controller = new AbortController();
+    const pending = apiRequest('', 't', '/slips/1/preview', {signal:controller.signal}, () => {});
+    controller.abort();
+    await assert.rejects(pending, {name:'AbortError'});
+    globalThis.fetch = async () => {throw new TypeError('Failed to fetch');};
+    await assert.rejects(apiRequest('', 't', '/me', {}, () => {}), /Could not reach the server/);
+  } finally {globalThis.fetch = original;}
+});

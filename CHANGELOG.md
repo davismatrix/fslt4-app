@@ -80,6 +80,11 @@ No release versions or historical release dates have been assigned.
 
 ### Fixed
 
+- Admin actions such as Reset password no longer appear to do nothing: API requests
+  time out (30 seconds; 5 minutes for uploads) with an actionable message instead of
+  leaving controls disabled indefinitely, and status/error messages stay pinned in view
+  with a dismiss control.
+
 - Successful sign-ins no longer count toward the account throttle; per-account limits
   now apply per client address (10) with a cross-address cap (100), so one attacker
   cannot lock a member out everywhere.
