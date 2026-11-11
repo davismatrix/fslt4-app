@@ -64,6 +64,9 @@ No release versions or historical release dates have been assigned.
 
 ### Changed
 
+- Moved Change password from the header into an account menu opened from the avatar,
+  which also shows the signed-in name and email.
+
 - Invitation and reset links now use the `/password` path so mobile apps can claim
   them; web hosts must serve `index.html` for `/password`.
 

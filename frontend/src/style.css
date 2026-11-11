@@ -94,3 +94,6 @@ button{white-space:normal}
 
 /* Keep action results visible wherever the admin is scrolled. */
 .messages{position:sticky;top:12px;z-index:5;display:grid;gap:8px}.messages p{margin:0 0 8px;display:flex;align-items:flex-start;justify-content:space-between;gap:12px;box-shadow:0 4px 14px rgba(32,63,55,.12)}.dismiss{background:transparent;color:inherit;padding:0 4px;font-size:20px;line-height:1}
+
+/* Avatar opens the account menu. */
+.account-menu{position:relative;flex-shrink:0}.account-menu .avatar{color:#203f37;font-weight:600;min-height:44px}.account-menu .avatar:hover{background:#dde5d1}.account-menu-items{position:absolute;right:0;top:calc(100% + 8px);z-index:6;min-width:220px;max-width:calc(100vw - 32px);background:white;border:1px solid #dfe5dc;border-radius:10px;box-shadow:0 8px 24px rgba(32,63,55,.14);padding:6px;display:grid}.account-menu-identity{display:grid;gap:2px;padding:10px 12px;border-bottom:1px solid #eef0ea;margin-bottom:4px;font-size:13px;overflow-wrap:anywhere}.account-menu-identity span{color:#718079;font-size:12px}.account-menu-items [role=menuitem]{background:transparent;color:#203f37;text-align:left;font-weight:500;padding:12px;min-height:44px;font-size:13px}.account-menu-items [role=menuitem]:hover,.account-menu-items [role=menuitem]:focus-visible{background:#f0f3ec}
